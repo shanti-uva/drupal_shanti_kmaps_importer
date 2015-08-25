@@ -1,0 +1,8 @@
+name = SHANTI KMaps Importer
+description = Imports KMap terms from the main site.
+core = 7.x
+package = SHANTI
+
+configure = admin/config/content/shanti_kmaps_importer
+
+dependencies[] = shanti_kmaps_admin

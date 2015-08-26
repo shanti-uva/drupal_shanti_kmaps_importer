@@ -1,0 +1,33 @@
+<?php
+
+function shanti_kmaps_importer_menu() {
+  return array(
+    'shanti_kmaps_importer/test/%' => array(
+      'page callback'     => 'shanti_kmaps_importer_test',
+      'type'              => MENU_CALLBACK,
+      'page arguments'    => array(2),
+      'access arguments'  => array('access content'),
+			'delivery callback' => 'shanti_kmaps_importer_plaintext_deliver',
+    ),
+  );
+}
+
+function shanti_kmaps_importer_test ($domain) {
+	if ($domain != 'subjects' and $domain != 'places') {
+		return "Bad Domain: $domain";
+	}
+	$url = variable_get("shanti_kmaps_admin_server_".$domain);	
+	$xml = simplexml_load_string(file_get_contents("$url/features/nested.xml"));
+	foreach ($xml->xpath('//feature') as $f) {
+		$parent 		 = $f->xpath('../feature');
+		$parent_id 	 = $parent[0]->attributes()->id;
+		$out 				.= $f->attributes()->id . '|' . $f->attributes()->title . '|' . $parent_id . "\n";
+	}
+	return $out;
+}
+
+function shanti_kmaps_importer_plaintext_deliver($page_callback_result) {
+  drupal_add_http_header('Content-Type', 'text/plain; utf-8');
+	print $page_callback_result;
+}
+

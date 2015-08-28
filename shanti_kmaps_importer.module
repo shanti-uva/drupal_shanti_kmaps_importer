@@ -2,15 +2,81 @@
 
 function shanti_kmaps_importer_menu() {
   return array(
-    'shanti_kmaps_importer/test/%' => array(
+    'shanti_kmaps_importer/api/%' => array(
       'page callback'     => 'shanti_kmaps_importer_test',
       'type'              => MENU_CALLBACK,
       'page arguments'    => array(2),
-      'access arguments'  => array('access content'),
+      'access arguments'  => array('administer taxonomy'),
 			'delivery callback' => 'shanti_kmaps_importer_plaintext_deliver',
+    ),
+    'admin/config/content/shanti_kmaps_importer' => array(
+      'title' 						=> 'SHANTI KMaps Importer',
+      'description'       => 'Import vocabularies from the main KMaps server.',
+      'page callback'     => 'shanti_kmaps_importer_admin',
+      'type'              => MENU_NORMAL_ITEM,
+      'access arguments'  => array('administer taxonomy'),
+    ),
+    /*
+    'admin/config/content/shanti_kmaps_importer/importers' => array(
+      'title' 						=> 'Importers',
+      'description'       => 'Select a vocabulary to importer. Take a break, too -- this will take some time. (Like, hours.)',
+      'page callback'     => 'shanti_kmaps_importer_admin_importers',
+      'type'              => MENU_LOCAL_ACTION,
+      'access arguments'  => array('administer taxonomy'),
+    ),
+    */
+    'admin/config/content/shanti_kmaps_importer/subjects' => array(
+      'title' 						=> 'Import Subjects',
+      'page callback'     => 'shanti_kmaps_importer_import_vocabulary_start',
+      'page arguments'    => array(4),
+      'type'              => MENU_LOCAL_ACTION,
+      'access arguments'  => array('administer taxonomy'),
+    ),
+    'admin/config/content/shanti_kmaps_importer/places' => array(
+      'title' 						=> 'Import Places',
+      'page callback'     => 'shanti_kmaps_importer_import_vocabulary_start',
+      'page arguments'    => array(4),
+      'type'              => MENU_LOCAL_ACTION,
+      'access arguments'  => array('administer taxonomy'),
+    ),
+    'admin/shanti_kmaps_importer/import/%' => array(
+      'page callback'     => 'shanti_kmaps_importer_import_vocabulary_start',
+      'type'              => MENU_CALLBACK,
+      'page arguments'    => array(3),
+      'access arguments'  => array('administer taxonomy'),
     ),
   );
 }
+
+function shanti_kmaps_importer_admin () {
+  $build = array(
+    '#type' => 'container',
+    '#prefix' => ('<h2>SHANTI KMaps Importer</h2>'),
+    'content' => array(
+    	'#markup' => 'This page may eventually have some config options here, e.g. whether to overwrite.',
+    ),
+  );
+  return $build;
+}
+
+/*
+function shanti_kmaps_importer_admin_importers () {
+  $build = array(
+    '#type' => 'container',
+    '#prefix' => ('<h2>SHANTI KMaps Importer / Importers</h2>'),
+    'actions' => array(
+      '#type' => 'ul',
+      '#theme' => 'item_list',
+      '#attributes' => array(),
+      '#items' => array(
+        array('data' => l('Import Subjects','admin/shanti_kmaps_importer/import/subjects')),
+        array('data' => l('Import Places','admin/shanti_kmaps_importer/import/places')),
+      ),
+    ),
+  );
+  return $build;
+}
+*/
 
 function shanti_kmaps_importer_test ($domain) {
 	if ($domain != 'subjects' and $domain != 'places') {
@@ -28,7 +94,7 @@ function shanti_kmaps_importer_test ($domain) {
 			$parent_title 	= trim($p->attributes()->title);
 			$parent_name 		= "$parent_title ($domain-$parent_id)";		
 		}
-		$out 						.=  "$title ($domain-$id)|$parent_name|$id\n";
+		$out 						.=  "$title ($domain-$id)|$parent_name|$id|$title\n";
 	}
 	return $out;
 }
@@ -36,5 +102,107 @@ function shanti_kmaps_importer_test ($domain) {
 function shanti_kmaps_importer_plaintext_deliver($page_callback_result) {
   drupal_add_http_header('Content-Type', 'text/plain; utf-8');
 	print $page_callback_result;
+}
+
+function shanti_kmaps_importer_import_vocabulary_start($domain) {
+	if ($domain != 'subjects' and $domain != 'places') {
+		return "Bad domain: '$domain'. Must be either 'subjects' or 'places'.";
+	} 
+  $batch = array(
+    'operations' => array(
+      array('shanti_kmaps_importer_import_vocabulary', array($domain)),
+    ),
+    'finished'          => 'shanti_kmaps_importer_import_finished',
+    'title'             => t("SHANTI KMaps Importer ($domain)"),
+    'init_message'      => t("Importer is grabbing $domain terms from server."),
+    'progress_message'  => t("Importer is updating the $domain vocabulary."),
+    'error_message'     => t('Uh oh, the Importer has encountered an error.'),    
+  );
+  batch_set($batch);
+  batch_process('admin/config/content/shanti_kmaps_importer');
+}
+
+function shanti_kmaps_importer_import_vocabulary($domain, &$context) {
+
+  if (!isset($context['sandbox']['progress'])) {
+    $context['sandbox']['progress'] = 0;
+    $context['sandbox']['current_term'] = 0;    
+		$url = variable_get("shanti_kmaps_admin_server_".$domain);	
+		$xml = simplexml_load_string(file_get_contents("$url/features/nested.xml"));
+		$out = '';
+		foreach ($xml->xpath('//feature') as $f) {
+			$term = array();
+			foreach ($f->attributes() as $k => $v) {
+				$term[$k] = trim($v);
+			};
+			$term['parent_id'] 	= '';
+			foreach ($f->xpath('parent::*[@id]') as $p) { 
+			  foreach ($p->attributes() as $k => $v) {
+			  	if ($k == 'id') {
+						$term['parent_id'] = trim($v); 
+						break;
+					}
+				};
+			}
+			$context['results']['terms'][] =  $term;
+		}
+		$vocabulary = taxonomy_vocabulary_machine_name_load("kmaps_$domain");
+		$context['results']['vid'] = $vocabulary->vid;
+    $context['results']['max'] = count($context['results']['terms']);
+    $context['results']['processed'] = 0;
+  }
+  
+  $count = 10;
+  $term_count = count($context['results']['terms']);
+  if ($term_count < $count) { $count = $term_count; }
+  $context['message'] = t("Imported " . $context['sandbox']['progress'] . " of " . $context['results']['max'] . " terms.");
+  for ($i = 0; $i < $count; $i++) {
+    $src_term = array_shift($context['results']['terms']);
+    $dst_term = null;
+    $dst_term_id = _shanti_kmaps_importer_get_tid_for_kmapid($domain,$src_term['id']);
+    if ($dst_term_id) {
+			$dst_term = taxonomy_term_load($dst_term_id);
+		}
+		else {
+			$dst_term = new stdClass();
+		}
+		$dst_term->vid 	= $context['results']['vid']; 
+		$dst_term->name = $src_term['title'];
+		$dst_term->field_sameas_kmapid[LANGUAGE_NONE][0]['value'] = $src_term['id']; 		
+		if ($src_term['parent_id']) {
+			$dst_term->parent = _shanti_kmaps_importer_get_tid_for_kmapid($domain,$src_term['parent_id']);
+		}
+		taxonomy_term_save($dst_term);    
+		
+    $context['sandbox']['current_term'] = $src_term['id'];
+    $context['sandbox']['progress']++;
+    $context['results']['processed']++;
+  }
+  if ($context['sandbox']['progress'] != $context['results']['max']) {
+    $context['finished'] = $context['sandbox']['progress'] / $context['results']['max'];
+  } 
+  
+}
+
+function shanti_kmaps_importer_import_finished($success, $results, $operations) {
+  if ($success) {
+    $message = $results['processed'] . ' of ' . $results['max'] . ' terms imported.';
+    drupal_set_message($message);
+  } else {
+    $error_operation = reset($operations);
+    $message = t('An error occurred while processing %error_operation with arguments: @arguments', array('%error_operation' => $error_operation[0], '@arguments' => print_r($error_operation[1], TRUE)));
+    drupal_set_message($message, 'error');
+  }
+}
+
+function _shanti_kmaps_importer_get_tid_for_kmapid($domain,$kmapid) {
+	$tid = null;
+	$sql = 'SELECT `entity_id` FROM {field_data_field_sameas_kmapid} WHERE `field_sameas_kmapid_value` = :kmapid AND `bundle` = :domain';
+	$rs = db_query($sql, array(':kmapid' => $kmapid, ':domain' => "kmaps_$domain"));
+	if ($rs) {
+		$r = $rs->fetchAssoc();
+		$tid = $r['entity_id'];
+	}
+	return $tid;
 }
 

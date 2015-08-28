@@ -6,3 +6,4 @@ package = SHANTI
 configure = admin/config/content/shanti_kmaps_importer
 
 dependencies[] = shanti_kmaps_admin
+dependencies[] = shanti_kmaps_vocabularies
